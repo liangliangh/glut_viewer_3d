@@ -4,13 +4,23 @@
 #include <stdio.h>
 #include <string.h>
 #include <stddef.h>
+#include <math.h>
 #include <assert.h>
 #include <vector>
 #include <map>
 #include "gl_staff.h"
 
 
-namespace GlStaff {
+static void initGL();
+static void cb_display();
+static void cb_reshape(int w, int h);
+static void cb_keyboard(unsigned char key, int x, int y);
+static void cb_specialkey(int key, int x, int y);
+static void cb_mouseclick(int button, int state, int x, int y);
+static void cb_mousemotion(int x, int y);
+static void grab(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float z);
+static void trackball(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float r);
+static void trackball_draw(float transparency);
 
 
 // state variables
@@ -19,17 +29,17 @@ static struct State {
 	int win_w, win_h;
 	int screen_w, screen_h;
 
-	// trackball
-	glm::mat4 mat_modelview = glm::lookAt(glm::vec3(0,0,100), glm::vec3(0,0,0), glm::vec3(0,1,0));
+	// transformation
+	glm::mat4 mat_modelview = glm::lookAt(glm::vec3(0,0,100), glm::vec3(0), glm::vec3(0,1,0));
 	glm::mat4 mat_projection;
 	bool  proj_orth = false; // true for orthogonal projection, false for perspective projection
-	float frustum_fovy = glm::radians(30.0);
-	float clip_n = 0.1f, clip_f = 1000;
+	float frustum_fovy = glm::radians(30.0f);
 	int   mouse_key_pressed = -1;
 	float xpos, ypos;
 	float trackball_r = 0.4f; // radius of track ball relative to min(WIN_H, WIN_W), should less than 0.5
 	float trackball_center_z = -100; // center of trackball, i.e., in camera coor
 	bool  camera_coor_marker = false;
+	bool  draw_fps = true;
 
 	// draw function
 	void (*draw_func)() = NULL;
@@ -37,11 +47,105 @@ static struct State {
 	// user key functions
 	std::map<int,void(*)()> key_funcs;
 
+	// functions
+	void save_mouse_pos(float x, float y)
+	{
+		xpos = x;
+		ypos = y;
+	}
+	void rotate_grab(float x, float y)
+	{
+		if(x==xpos && y==ypos) return;
+		float s = -trackball_center_z*tan(frustum_fovy/2) / (win_h/2.0f);
+		float theta; glm::vec3 n;
+		grab( &theta, &n,
+			(xpos-win_w/2.0f)*s, (ypos-win_h/2.0f)*s, (x-win_w/2.0f)*s, (y-win_h/2.0f)*s,
+			trackball_center_z);
+		mat_modelview = glm::rotate(theta, n) * mat_modelview;
+	}
+	void rotate_trackball_win(float x, float y) // O at left-bottom of window, to left is X+, up is Y+
+	{
+		if(x==xpos && y==ypos) return;
+		float theta; glm::vec3 n;
+		trackball( &theta, &n,
+			xpos-win_w/2.0f, ypos-win_h/2.0f, x-win_w/2.0f, y-win_h/2.0f,
+			std::min(win_w,win_h)*trackball_r );
+
+		glm::mat4 inv_modelview = glm::affineInverse(mat_modelview);
+		glm::vec3 normal = glm::vec3( inv_modelview * glm::vec4(n, 0) );
+		glm::vec3 center = glm::vec3( inv_modelview * glm::vec4(0, 0, trackball_center_z, 1) );
+		mat_modelview *= glm::translate(center) * glm::rotate(theta, normal) * glm::translate(-center);
+	}
+	void translate_win(float x, float y)
+	{
+		if(x==xpos && y==ypos) return;
+		float dx = x-xpos, dy = y-ypos;
+		float scale = tan(frustum_fovy/2)*(-trackball_center_z) / (win_h/2);
+		mat_modelview = glm::translate( glm::vec3(scale*dx, scale*dy, 0) ) * mat_modelview;
+	}
+	void scale(float s) // s=1, not change, >1 bigger, <1 smaller
+	{
+		if(s==1) return;
+		float z = trackball_center_z;
+		trackball_center_z *= s;
+		win_size(win_w, win_h); // for proj_orth
+		mat_modelview = glm::translate( glm::vec3(0, 0, trackball_center_z-z) ) * mat_modelview;
+	}
+	void win_size(int w, int h)
+	{
+		win_w = w;
+		win_h = h;
+		if(proj_orth){
+			float hh = -trackball_center_z * tan(frustum_fovy/2) * 2;
+			float ww = hh * w / h;
+			mat_projection = glm::ortho(-ww/2, ww/2, -hh/2, hh/2, trackball_center_z*2, -trackball_center_z*4);
+		}else{
+			mat_projection = glm::perspective(
+				frustum_fovy, float(w)/h, -trackball_center_z*0.1f, -trackball_center_z*5);
+		}
+	}
+	bool toggle_orth()
+	{
+		proj_orth = !proj_orth;
+		win_size(win_w, win_h);
+		return proj_orth;
+	}
+	void load_gl_matrix()
+	{
+		glMatrixMode(GL_PROJECTION);
+		glLoadMatrixf(&mat_projection[0][0]);
+		glMatrixMode(GL_MODELVIEW);
+		glLoadMatrixf(&mat_modelview[0][0]);
+	}
+
 } state;
 
 
+void GlStaff::init(int win_width, int win_height, const char* win_tile)
+{
+	int argc = 0;
+	glutInit(&argc, NULL);
+	state.screen_w = glutGet(GLUT_SCREEN_WIDTH);
+	state.screen_h = glutGet(GLUT_SCREEN_HEIGHT);
+	glutInitDisplayMode(GLUT_DEPTH | GLUT_RGBA | GLUT_DOUBLE | GLUT_MULTISAMPLE);
+	glutInitWindowPosition(std::max((state.screen_w-win_width)/2,0), std::max((state.screen_h-win_height)/2,0)); // set window to center of screen
+	glutInitWindowSize(win_width, win_height);
+	cb_reshape(win_width, win_height);
 
-void initGL()
+	glutCreateWindow(win_tile);
+
+	//  The callbacks, called after glutCreateWindow()
+	glutDisplayFunc(cb_display);
+	glutReshapeFunc(cb_reshape);
+	glutKeyboardFunc(cb_keyboard);
+	glutSpecialFunc(cb_specialkey);
+	glutMouseFunc(cb_mouseclick);
+	glutMotionFunc(cb_mousemotion);
+
+	initGL();
+}
+
+static void initGL()
 {
 	// matrix
 	glMatrixMode(GL_PROJECTION);
@@ -91,45 +195,14 @@ void initGL()
 	glEnable(GL_LINE_SMOOTH);
 }
 
-void cb_display();
-void cb_reshape(int w, int h);
-void cb_keyboard(unsigned char key, int x, int y);
-void cb_specialkey(int key, int x, int y);
-void cb_mouseclick(int button, int state, int x, int y);
-void cb_mousemotion(int x, int y);
-
-void init(int win_width, int win_height, const char* win_tile)
-{
-	int argc = 0;
-	glutInit(&argc, NULL);
-	state.screen_w = glutGet(GLUT_SCREEN_WIDTH);
-	state.screen_h = glutGet(GLUT_SCREEN_HEIGHT);
-	glutInitDisplayMode(GLUT_DEPTH | GLUT_RGBA | GLUT_DOUBLE | GLUT_MULTISAMPLE);
-	glutInitWindowPosition(std::max((state.screen_w-win_width)/2,0), std::max((state.screen_h-win_height)/2,0)); // set window to center of screen
-	glutInitWindowSize(win_width, win_height);
-	cb_reshape(win_width, win_height);
-
-	glutCreateWindow(win_tile);
-
-	//  The callbacks, called after glutCreateWindow()
-	glutDisplayFunc(cb_display);
-	glutReshapeFunc(cb_reshape);
-	glutKeyboardFunc(cb_keyboard);
-	glutSpecialFunc(cb_specialkey);
-	glutMouseFunc(cb_mouseclick);
-	glutMotionFunc(cb_mousemotion);
-
-	initGL();
-}
-
-void add_key_func( int key, void (*f)() )
+void GlStaff::add_key_func( int key, void (*f)() )
 {
 	assert(f);
 
 	state.key_funcs[key] = f;
 }
 
-void display_loop( void (*draw)() )
+void GlStaff::display_loop( void (*draw)() )
 {
 	assert(draw);
 
@@ -137,43 +210,35 @@ void display_loop( void (*draw)() )
 	glutMainLoop();
 }
 
-void trackball_draw(float transparency);
+bool GlStaff::toggle_proj_orth()
+{
+	return state.toggle_orth();
+}
 
-void cb_display()
+static void cb_display()
 {
 	// matrix
-	glMatrixMode(GL_PROJECTION);
-	glLoadMatrixf(&state.mat_projection[0][0]);
-	glMatrixMode(GL_MODELVIEW);
-	glLoadMatrixf(&state.mat_modelview[0][0]);
+	state.load_gl_matrix();
 
 	// call user's draw()
 	state.draw_func();
 
 	// fps and state
 	if(state.mouse_key_pressed==-1)
-		;//trackball_draw(0.2f);
+		trackball_draw(0.3f);
 	else
 		trackball_draw(0.5f);
 
 	glutSwapBuffers();
 }
 
-void cb_reshape(int w, int h)
+static void cb_reshape(int w, int h)
 {
-	state.win_w = w;
-	state.win_h = h;
-	if(state.proj_orth){
-		float hh = -state.trackball_center_z * tan(state.frustum_fovy/2) * 2;
-		float ww = hh * w / h;
-		state.mat_projection = glm::ortho(-ww/2, ww/2, -hh/2, hh/2, 0.0f, state.trackball_center_z);
-	}else{
-		state.mat_projection = glm::perspective(state.frustum_fovy, float(w)/h, state.clip_n, state.clip_f);
-	}
+	state.win_size(w, h);
 	glViewport(0, 0, w, h);
 }
 
-void cb_keyboard(unsigned char key, int x, int y)
+static void cb_keyboard(unsigned char key, int x, int y)
 {
 	switch(key){
 	case 27: // esc
@@ -187,7 +252,7 @@ void cb_keyboard(unsigned char key, int x, int y)
 	};
 }
 
-void cb_specialkey(int key, int x, int y)
+static void cb_specialkey(int key, int x, int y)
 {
 	switch(key){
 	case GLUT_KEY_F1:
@@ -202,7 +267,7 @@ void cb_specialkey(int key, int x, int y)
 #define GLUT_WHEEL_DOWN 4
 #endif
 
-void cb_mouseclick(int button, int bstate, int x, int y)
+static void cb_mouseclick(int button, int bstate, int x, int y)
 {
 	if( bstate == GLUT_UP ){
 		state.mouse_key_pressed = -1;
@@ -211,58 +276,52 @@ void cb_mouseclick(int button, int bstate, int x, int y)
 
 	switch(button) {
 	case GLUT_LEFT_BUTTON:
-		case GLUT_RIGHT_BUTTON:
-		case GLUT_MIDDLE_BUTTON:
-			state.mouse_key_pressed = button;
-			break;
-		case GLUT_WHEEL_UP:
-
-			break;
-		case GLUT_WHEEL_DOWN:
-
-			break;
+	case GLUT_RIGHT_BUTTON:
+	case GLUT_MIDDLE_BUTTON:
+		state.mouse_key_pressed = button;
+		break;
+	case GLUT_WHEEL_UP:
+		state.scale(1.05f);
+		break;
+	case GLUT_WHEEL_DOWN:
+		state.scale(0.95f);
+		break;
 	}
 
-	state.xpos = x;
-	state.ypos = state.win_h - y;
+	state.save_mouse_pos(x, state.win_h - y);
 }
 
-void trackball(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float r);
-
-void cb_mousemotion(int x, int y)
+static void cb_mousemotion(int x, int y)
 {
-	float xpos = x, ypos = state.win_h - y;
-	float dx = xpos-state.xpos, dy = ypos-state.ypos;
-
-	if(dx==0 && dy==0) return;
-
-	if(state.mouse_key_pressed==GLUT_LEFT_BUTTON){ // mouse left, trackball
-
-		float theta; glm::vec3 n;
-		trackball( &theta, &n,
-			state.xpos-state.win_w/2.0f, state.ypos-state.win_h/2.0f,
-			xpos-state.win_w/2.0f, ypos-state.win_h/2.0f,
-			std::min(state.win_w,state.win_h)*state.trackball_r );
-
-		glm::mat4 inv_modelview = glm::affineInverse(state.mat_modelview);
-		glm::vec3 normal = glm::vec3( inv_modelview * glm::vec4(n, 0) );
-		glm::vec3 center = glm::vec3( inv_modelview * glm::vec4(0, 0, state.trackball_center_z, 1) );
-		state.mat_modelview *= glm::translate(center) * glm::rotate(theta, normal) * glm::translate(-center);
-
-	}else if(state.mouse_key_pressed==GLUT_RIGHT_BUTTON){ // mouse right, change camera direction
-
-	}else if(state.mouse_key_pressed==GLUT_MIDDLE_BUTTON){ // mouse middle, translate
-
-		float scale = tan(state.frustum_fovy/2)*(-state.trackball_center_z) / (state.win_h/2);
-		state.mat_modelview = glm::translate( glm::vec3(scale*dx, scale*dy, 0) ) * state.mat_modelview;
-
+	if(state.mouse_key_pressed==GLUT_LEFT_BUTTON)
+	{ // mouse left, trackball
+		state.rotate_trackball_win(x, state.win_h - y);
+	}
+	else if(state.mouse_key_pressed==GLUT_RIGHT_BUTTON)
+	{ // mouse right, change camera direction
+		state.rotate_grab(x, state.win_h - y);
+	}
+	else if(state.mouse_key_pressed==GLUT_MIDDLE_BUTTON)
+	{ // mouse middle, translate
+		state.translate_win(x, state.win_h - y);
 	}
 
-	state.xpos = xpos;
-	state.ypos = ypos;
+	state.save_mouse_pos(x, state.win_h - y);
 }
 
-void trackball(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float r)
+static void grab(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float z)
+{
+	glm::vec3 a = glm::normalize( glm::vec3(ax,ay,z) );
+	glm::vec3 b = glm::normalize( glm::vec3(bx,by,z) );
+	float d = glm::dot(a,b);
+	if( d <= -1 )   *theta = std::acos(-1 ); // acoss(a<-1 || a>1) return NaN
+	else if(d >= 1) *theta = std::acos( 1 );
+	else            *theta = std::acos( d );
+	glm::vec3 c = glm::cross( a, b );
+	*normal = glm::length2(c)==0 ? glm::vec3(0,1,0) : c;
+}
+
+static void trackball(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float r)
 {
 	float az, bz, a2=ax*ax+ay*ay, b2=bx*bx+by*by, r2=r*r;
 	if(a2 <= r2/2)
@@ -275,12 +334,15 @@ void trackball(float* theta, glm::vec3* normal, float ax, float ay, float bx, fl
 		bz = r2 / 2 / sqrt( b2 );
 	glm::vec3 a = glm::normalize( glm::vec3(ax,ay,az) );
 	glm::vec3 b = glm::normalize( glm::vec3(bx,by,bz) );
-	*theta = std::acos( glm::dot(a,b) );
-	*normal = glm::cross( a, b );
+	float d = glm::dot(a,b);
+	if( d <= -1 )   *theta = std::acos(-1 ); // acoss(a<-1 || a>1) return NaN
+	else if(d >= 1) *theta = std::acos( 1 );
+	else            *theta = std::acos( d );
+	glm::vec3 c = glm::cross( a, b );
+	*normal = glm::length2(c)==0 ? glm::vec3(0,1,0) : c;
 }
 
-
-void trackball_draw(float transparency)
+static void trackball_draw(float transparency)
 {
 	static std::vector<float> circle_r1_xy;
 	if( circle_r1_xy.size()==0 ){
@@ -315,21 +377,21 @@ void trackball_draw(float transparency)
 	glTranslatef(center.x, center.y, center.z);
 	glScalef(r, r, r);
 	// x
-	glColor4f(1, 0, 0, transparency);
+	glColor4f(1, 0.5f, 0.5f, transparency);
 	glBegin(GL_LINE_STRIP);
 	for(int i=0; i<circle_r1_xy.size(); i+=2){
 		glVertex3f(0, circle_r1_xy[i], circle_r1_xy[i+1]);
 	}
 	glEnd();
 	// y
-	glColor4f(0, 1, 0, transparency);
+	glColor4f(0.5f, 1, 0.5f, transparency);
 	glBegin(GL_LINE_STRIP);
 	for(int i=0; i<circle_r1_xy.size(); i+=2){
 		glVertex3f(circle_r1_xy[i], 0, circle_r1_xy[i+1]);
 	}
 	glEnd();
 	// z
-	glColor4f(0, 0, 1, transparency);
+	glColor4f(0.5f, 0.5f, 1, transparency);
 	glBegin(GL_LINE_STRIP);
 	for(int i=0; i<circle_r1_xy.size(); i+=2){
 		glVertex3f(circle_r1_xy[i], circle_r1_xy[i+1], 0);
@@ -344,7 +406,7 @@ void trackball_draw(float transparency)
 	glColor3fv(gl_cl);
 }
 
-void xyz_frame(float xlen, float ylen, float zlen, bool solid)
+void GlStaff::xyz_frame(float xlen, float ylen, float zlen, bool solid)
 {
 	if(solid){ // yz frame as solid arrows
 		GLfloat color_gls[4]; glGetMaterialfv(GL_FRONT, GL_SPECULAR, color_gls);
@@ -433,7 +495,7 @@ void xyz_frame(float xlen, float ylen, float zlen, bool solid)
  * lightness:  black(0) -> perfect colorful(0.5) -> white(1)
  * http://blog.csdn.net/idfaya/article/details/6770414
 */
-void hsl_to_rgb( float h, float s, float l, float* rgb )
+void GlStaff::hsl_to_rgb( float h, float s, float l, float* rgb )
 {
 	if( s==0 ) { rgb[0] = rgb[1] = rgb[2] = l; return; }
 	float q, p, hk, t[3];
@@ -456,9 +518,8 @@ void hsl_to_rgb( float h, float s, float l, float* rgb )
 	}
 }
 
-float rgb_to_gray( float r, float g, float b )
+float GlStaff::rgb_to_gray( float r, float g, float b )
 {
 	return r*0.299f + g*0.587f + b*0.114f;
 }
 
-} // namespace GlStaff

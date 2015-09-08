@@ -19,6 +19,8 @@ void init( int win_width, int win_height, const char* win_tile );
 void add_key_func( int key, void (*f)() );
 void display_loop( void (*draw)() ); // do not swapbuffer in draw()
 void xyz_frame(float xlen, float ylen, float zlen, bool solid);
+void toggle_fps();
+bool toggle_proj_orth();
 
 void hsl_to_rgb( float h, float s, float l, float* rgb );
 float rgb_to_gray( float r, float g, float b );
