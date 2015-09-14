@@ -16,45 +16,32 @@ static void cb_display();
 static void cb_reshape(int w, int h);
 static void cb_keyboard(unsigned char key, int x, int y);
 static void cb_specialkey(int key, int x, int y);
-static void cb_mouseclick(int button, int state, int x, int y);
+static void cb_mouseclick(int button, int trans_state, int x, int y);
 static void cb_mousemotion(int x, int y);
-static void grab(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float z);
-static void trackball(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float r);
-static void trackball_draw(float transparency);
 
-
-// state variables
-static struct State {
-	// window
-	int win_w, win_h;
-	int screen_w, screen_h;
-
-	// transformation
+// class to implement OpenGL view transformation from mouse
+class TransformationState
+{
+public:
+	int   win_w=1, win_h=1;
 	glm::mat4 mat_modelview = glm::lookAt(glm::vec3(0,0,100), glm::vec3(0), glm::vec3(0,1,0));
 	glm::mat4 mat_projection;
-	bool  proj_orth = false; // true for orthogonal projection, false for perspective projection
 	float frustum_fovy = glm::radians(30.0f);
-	int   mouse_key_pressed = -1;
-	float xpos, ypos;
 	float trackball_r = 0.4f; // radius of track ball relative to min(WIN_H, WIN_W), should less than 0.5
 	float trackball_center_z = -100; // center of trackball, i.e., in camera coor
-	bool  camera_coor_marker = false;
-	bool  draw_fps = true;
+	bool  proj_orth = false; // true for orthogonal projection, false for perspective projection
+	float origin_upper_left = true; // true if origin is upper-left, false lower-left
+	float xpos=0, ypos=0;
 
-	// draw function
-	void (*draw_func)() = NULL;
-
-	// user key functions
-	std::map<int,void(*)()> key_funcs;
-
-	// functions
+	// rotate_grab, rotate_trackball, translate use the last mouse pos saved by save_mouse_pos
 	void save_mouse_pos(float x, float y)
 	{
 		xpos = x;
-		ypos = y;
+		ypos = origin_upper_left ? win_h-y : y;
 	}
 	void rotate_grab(float x, float y)
 	{
+		if(origin_upper_left) y = win_h-y;
 		if(x==xpos && y==ypos) return;
 		float s = -trackball_center_z*tan(frustum_fovy/2) / (win_h/2.0f);
 		float theta; glm::vec3 n;
@@ -63,8 +50,9 @@ static struct State {
 			trackball_center_z);
 		mat_modelview = glm::rotate(theta, n) * mat_modelview;
 	}
-	void rotate_trackball_win(float x, float y) // O at left-bottom of window, to left is X+, up is Y+
+	void rotate_trackball(float x, float y) // O at left-bottom of window, to left is X+, up is Y+
 	{
+		if(origin_upper_left) y = win_h-y;
 		if(x==xpos && y==ypos) return;
 		float theta; glm::vec3 n;
 		trackball( &theta, &n,
@@ -76,32 +64,34 @@ static struct State {
 		glm::vec3 center = glm::vec3( inv_modelview * glm::vec4(0, 0, trackball_center_z, 1) );
 		mat_modelview *= glm::translate(center) * glm::rotate(theta, normal) * glm::translate(-center);
 	}
-	void translate_win(float x, float y)
+	void translate(float x, float y)
 	{
+		if(origin_upper_left) y = win_h-y;
 		if(x==xpos && y==ypos) return;
 		float dx = x-xpos, dy = y-ypos;
 		float scale = tan(frustum_fovy/2)*(-trackball_center_z) / (win_h/2);
 		mat_modelview = glm::translate( glm::vec3(scale*dx, scale*dy, 0) ) * mat_modelview;
 	}
-	void scale(float s) // s=1, not change, >1 bigger, <1 smaller
+	// s=1, not change, >1 bigger, <1 smaller
+	void scale(float s)
 	{
-		if(s==1) return;
+		if(s==1 || s<=0) return;
 		float z = trackball_center_z;
 		trackball_center_z *= s;
-		win_size(win_w, win_h); // for proj_orth
+		win_size(win_w, win_h); // recompute projection matrix
 		mat_modelview = glm::translate( glm::vec3(0, 0, trackball_center_z-z) ) * mat_modelview;
 	}
-	void win_size(int w, int h)
+	void win_size(int width, int height)
 	{
-		win_w = w;
-		win_h = h;
+		win_w = width;
+		win_h = height;
 		if(proj_orth){
 			float hh = -trackball_center_z * tan(frustum_fovy/2) * 2;
-			float ww = hh * w / h;
+			float ww = hh * win_w / win_h;
 			mat_projection = glm::ortho(-ww/2, ww/2, -hh/2, hh/2, trackball_center_z*2, -trackball_center_z*4);
 		}else{
 			mat_projection = glm::perspective(
-				frustum_fovy, float(w)/h, -trackball_center_z*0.1f, -trackball_center_z*5);
+				frustum_fovy, float(win_w)/win_h, -trackball_center_z*0.1f, -trackball_center_z*5);
 		}
 	}
 	bool toggle_orth()
@@ -110,25 +100,150 @@ static struct State {
 		win_size(win_w, win_h);
 		return proj_orth;
 	}
-	void load_gl_matrix()
+	void load_gl_matrix() const
 	{
 		glMatrixMode(GL_PROJECTION);
 		glLoadMatrixf(&mat_projection[0][0]);
 		glMatrixMode(GL_MODELVIEW);
 		glLoadMatrixf(&mat_modelview[0][0]);
 	}
+	void draw_trackball(float transparency, float linewidth) const
+	{
+		float r = -trackball_center_z * tan( frustum_fovy/2 ) * trackball_r * 2;
+		glm::vec3 center = glm::vec3(
+				glm::affineInverse(mat_modelview) * glm::vec4(0, 0, trackball_center_z, 1) );
 
-} state;
+		glMatrixMode(GL_PROJECTION); glPushMatrix();
+		glMatrixMode(GL_MODELVIEW); glPushMatrix();
+		load_gl_matrix();
+		glTranslatef(center.x, center.y, center.z);
+		glScalef(r, r, r);
+
+		float color_x[] = { 1,0,0, transparency, linewidth };
+		float color_y[] = { 0,1,0, transparency, linewidth };
+		float color_z[] = { 0,0,1, transparency, linewidth };
+		draw_3axis_unite_circle(color_x, color_y, color_z);
+
+		glMatrixMode(GL_PROJECTION); glPopMatrix();
+		glMatrixMode(GL_MODELVIEW);glPopMatrix();
+	}
+
+
+private:
+
+	static void grab(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float z)
+	{
+		glm::vec3 a = glm::normalize( glm::vec3(ax,ay,z) );
+		glm::vec3 b = glm::normalize( glm::vec3(bx,by,z) );
+		float d = glm::dot(a,b);
+		if( d <= -1 )   *theta = std::acos(-1 ); // acoss(a<-1 || a>1) return NaN
+		else if(d >= 1) *theta = std::acos( 1 );
+		else            *theta = std::acos( d );
+		glm::vec3 c = glm::cross( a, b );
+		*normal = glm::length2(c)==0 ? glm::vec3(0,1,0) : c;
+	}
+	static void trackball(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float r)
+	{
+		float az, bz, a2=ax*ax+ay*ay, b2=bx*bx+by*by, r2=r*r;
+		if(a2 <= r2/2)
+			az = sqrt( r2-a2 ); // https://www.opengl.org/wiki/Object_Mouse_Trackball
+		else
+			az = r2 / 2 / sqrt( a2 );
+		if(b2 <= r2/2)
+			bz = sqrt( r2-b2 );
+		else
+			bz = r2 / 2 / sqrt( b2 );
+		glm::vec3 a = glm::normalize( glm::vec3(ax,ay,az) );
+		glm::vec3 b = glm::normalize( glm::vec3(bx,by,bz) );
+		float d = glm::dot(a,b);
+		if( d <= -1 )   *theta = std::acos(-1 ); // acoss(a<-1 || a>1) return NaN
+		else if(d >= 1) *theta = std::acos( 1 );
+		else            *theta = std::acos( d );
+		glm::vec3 c = glm::cross( a, b );
+		*normal = glm::length2(c)==0 ? glm::vec3(0,1,0) : c;
+	}
+	// color_xox[4] is linewidth
+	static void draw_3axis_unite_circle(float color_yoz[5], float color_zox[5], float color_xoy[5])
+	{
+		static std::vector<float> circle_r1_xy;
+		if( circle_r1_xy.size()==0 ){
+			const int n = 100;
+			for(int i=0; i<n; ++i){
+				float radians = float(i)/n * 2 * 3.14159265f;
+				circle_r1_xy.push_back( cos(radians) );
+				circle_r1_xy.push_back( sin(radians) );
+			}
+			circle_r1_xy.push_back( 1 );
+			circle_r1_xy.push_back( 0 );
+		}
+
+		GLboolean gl_li = glIsEnabled(GL_LIGHTING);
+		GLboolean gl_dp = glIsEnabled(GL_DEPTH_TEST);
+		GLboolean gl_bd = glIsEnabled(GL_BLEND);
+		GLfloat   gl_lw;  glGetFloatv(GL_LINE_WIDTH, &gl_lw);
+		GLfloat   gl_cl[4]; glGetFloatv(GL_CURRENT_COLOR, gl_cl);
+
+		glDisable(GL_LIGHTING);
+		glEnable(GL_DEPTH_TEST);
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+		// x
+		glLineWidth(color_yoz[4]);
+		glColor4fv(color_yoz);
+		glBegin(GL_LINE_STRIP);
+		for(int i=0; i<circle_r1_xy.size(); i+=2){
+			glVertex3f(0, circle_r1_xy[i], circle_r1_xy[i+1]);
+		}
+		glEnd();
+		// y
+		glLineWidth(color_zox[4]);
+		glColor4fv(color_zox);
+		glBegin(GL_LINE_STRIP);
+		for(int i=0; i<circle_r1_xy.size(); i+=2){
+			glVertex3f(circle_r1_xy[i], 0, circle_r1_xy[i+1]);
+		}
+		glEnd();
+		// z
+		glLineWidth(color_xoy[4]);
+		glColor4fv(color_xoy);
+		glBegin(GL_LINE_STRIP);
+		for(int i=0; i<circle_r1_xy.size(); i+=2){
+			glVertex3f(circle_r1_xy[i], circle_r1_xy[i+1], 0);
+		}
+		glEnd();
+
+		if( gl_li ) glEnable(GL_LIGHTING);   else glDisable(GL_LIGHTING);
+		if( gl_dp ) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+		if( gl_bd ) glEnable(GL_BLEND);      else glDisable(GL_BLEND);
+		glLineWidth(gl_lw);
+		glColor3fv(gl_cl);
+	}
+
+}; // class TransformationState
+
+TransformationState trans_state;
+
+int screen_w, screen_h;
+bool camera_coor_marker = false;
+bool draw_fps = true;
+int  mouse_key_pressed = -1;
+
+// draw function
+void (*draw_func)() = NULL;
+
+// user key functions
+std::map<int,void(*)()> key_funcs;
 
 
 void GlStaff::init(int win_width, int win_height, const char* win_tile)
 {
 	int argc = 0;
 	glutInit(&argc, NULL);
-	state.screen_w = glutGet(GLUT_SCREEN_WIDTH);
-	state.screen_h = glutGet(GLUT_SCREEN_HEIGHT);
+	screen_w = glutGet(GLUT_SCREEN_WIDTH);
+	screen_h = glutGet(GLUT_SCREEN_HEIGHT);
 	glutInitDisplayMode(GLUT_DEPTH | GLUT_RGBA | GLUT_DOUBLE | GLUT_MULTISAMPLE);
-	glutInitWindowPosition(std::max((state.screen_w-win_width)/2,0), std::max((state.screen_h-win_height)/2,0)); // set window to center of screen
+	glutInitWindowPosition(std::max((screen_w-win_width)/2,0), std::max((screen_h-win_height)/2,0)); // set window to center of screen
 	glutInitWindowSize(win_width, win_height);
 	cb_reshape(win_width, win_height);
 
@@ -199,42 +314,42 @@ void GlStaff::add_key_func( int key, void (*f)() )
 {
 	assert(f);
 
-	state.key_funcs[key] = f;
+	key_funcs[key] = f;
 }
 
 void GlStaff::display_loop( void (*draw)() )
 {
 	assert(draw);
 
-	state.draw_func = draw;
+	draw_func = draw;
 	glutMainLoop();
 }
 
 bool GlStaff::toggle_proj_orth()
 {
-	return state.toggle_orth();
+	return trans_state.toggle_orth();
 }
 
 static void cb_display()
 {
 	// matrix
-	state.load_gl_matrix();
+	trans_state.load_gl_matrix();
 
 	// call user's draw()
-	state.draw_func();
+	draw_func();
 
-	// fps and state
-	if(state.mouse_key_pressed==-1)
-		trackball_draw(0.3f);
+	// fps and trans_state
+	if(mouse_key_pressed==-1)
+		trans_state.draw_trackball(0.3f, 1);
 	else
-		trackball_draw(0.5f);
+		trans_state.draw_trackball(0.5f, 2);
 
 	glutSwapBuffers();
 }
 
 static void cb_reshape(int w, int h)
 {
-	state.win_size(w, h);
+	trans_state.win_size(w, h);
 	glViewport(0, 0, w, h);
 }
 
@@ -245,9 +360,9 @@ static void cb_keyboard(unsigned char key, int x, int y)
 		exit(0);
 		break;
 	default:
-		if(state.key_funcs.find(key)!=state.key_funcs.end()){
-			if(state.key_funcs[key])
-				(*state.key_funcs[key])();
+		if(key_funcs.find(key)!=key_funcs.end()){
+			if(key_funcs[key])
+				(*key_funcs[key])();
 		}
 	};
 }
@@ -270,7 +385,7 @@ static void cb_specialkey(int key, int x, int y)
 static void cb_mouseclick(int button, int bstate, int x, int y)
 {
 	if( bstate == GLUT_UP ){
-		state.mouse_key_pressed = -1;
+		mouse_key_pressed = -1;
 		return;
 	}
 
@@ -278,132 +393,35 @@ static void cb_mouseclick(int button, int bstate, int x, int y)
 	case GLUT_LEFT_BUTTON:
 	case GLUT_RIGHT_BUTTON:
 	case GLUT_MIDDLE_BUTTON:
-		state.mouse_key_pressed = button;
+		mouse_key_pressed = button;
 		break;
 	case GLUT_WHEEL_UP:
-		state.scale(1.05f);
+		trans_state.scale(1.05f);
 		break;
 	case GLUT_WHEEL_DOWN:
-		state.scale(0.95f);
+		trans_state.scale(0.95f);
 		break;
 	}
 
-	state.save_mouse_pos(x, state.win_h - y);
+	trans_state.save_mouse_pos(x, y);
 }
 
 static void cb_mousemotion(int x, int y)
 {
-	if(state.mouse_key_pressed==GLUT_LEFT_BUTTON)
+	if(mouse_key_pressed==GLUT_LEFT_BUTTON)
 	{ // mouse left, trackball
-		state.rotate_trackball_win(x, state.win_h - y);
+		trans_state.rotate_trackball(x, y);
 	}
-	else if(state.mouse_key_pressed==GLUT_RIGHT_BUTTON)
+	else if(mouse_key_pressed==GLUT_RIGHT_BUTTON)
 	{ // mouse right, change camera direction
-		state.rotate_grab(x, state.win_h - y);
+		trans_state.rotate_grab(x, y);
 	}
-	else if(state.mouse_key_pressed==GLUT_MIDDLE_BUTTON)
+	else if(mouse_key_pressed==GLUT_MIDDLE_BUTTON)
 	{ // mouse middle, translate
-		state.translate_win(x, state.win_h - y);
+		trans_state.translate(x, y);
 	}
 
-	state.save_mouse_pos(x, state.win_h - y);
-}
-
-static void grab(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float z)
-{
-	glm::vec3 a = glm::normalize( glm::vec3(ax,ay,z) );
-	glm::vec3 b = glm::normalize( glm::vec3(bx,by,z) );
-	float d = glm::dot(a,b);
-	if( d <= -1 )   *theta = std::acos(-1 ); // acoss(a<-1 || a>1) return NaN
-	else if(d >= 1) *theta = std::acos( 1 );
-	else            *theta = std::acos( d );
-	glm::vec3 c = glm::cross( a, b );
-	*normal = glm::length2(c)==0 ? glm::vec3(0,1,0) : c;
-}
-
-static void trackball(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float r)
-{
-	float az, bz, a2=ax*ax+ay*ay, b2=bx*bx+by*by, r2=r*r;
-	if(a2 <= r2/2)
-		az = sqrt( r2-a2 ); // https://www.opengl.org/wiki/Object_Mouse_Trackball
-	else
-		az = r2 / 2 / sqrt( a2 );
-	if(b2 <= r2/2)
-		bz = sqrt( r2-b2 );
-	else
-		bz = r2 / 2 / sqrt( b2 );
-	glm::vec3 a = glm::normalize( glm::vec3(ax,ay,az) );
-	glm::vec3 b = glm::normalize( glm::vec3(bx,by,bz) );
-	float d = glm::dot(a,b);
-	if( d <= -1 )   *theta = std::acos(-1 ); // acoss(a<-1 || a>1) return NaN
-	else if(d >= 1) *theta = std::acos( 1 );
-	else            *theta = std::acos( d );
-	glm::vec3 c = glm::cross( a, b );
-	*normal = glm::length2(c)==0 ? glm::vec3(0,1,0) : c;
-}
-
-static void trackball_draw(float transparency)
-{
-	static std::vector<float> circle_r1_xy;
-	if( circle_r1_xy.size()==0 ){
-		const int n = 100;
-		for(int i=0; i<n; ++i){
-			float radians = float(i)/n * 2 * 3.14159265f;
-			circle_r1_xy.push_back( cos(radians) );
-			circle_r1_xy.push_back( sin(radians) );
-		}
-		circle_r1_xy.push_back( 1 );
-		circle_r1_xy.push_back( 0 );
-	}
-
-	float r = abs(state.trackball_center_z) * tan( state.frustum_fovy/2 ) * state.trackball_r * 2;
-	glm::vec3 center = glm::vec3(
-			glm::affineInverse(state.mat_modelview) * glm::vec4(0, 0, state.trackball_center_z, 1) );
-
-	GLboolean gl_li = glIsEnabled(GL_LIGHTING);
-	GLboolean gl_dp = glIsEnabled(GL_DEPTH_TEST);
-	GLboolean gl_bd = glIsEnabled(GL_BLEND);
-	GLfloat   gl_lw; glGetFloatv(GL_LINE_WIDTH, &gl_lw);
-	GLfloat gl_cl[4]; glGetFloatv(GL_CURRENT_COLOR, gl_cl);
-
-	glDisable(GL_LIGHTING);
-	glEnable(GL_DEPTH_TEST);
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	glLineWidth(2);
-
-	glMatrixMode(GL_MODELVIEW);
-	glPushMatrix();
-	glTranslatef(center.x, center.y, center.z);
-	glScalef(r, r, r);
-	// x
-	glColor4f(1, 0.5f, 0.5f, transparency);
-	glBegin(GL_LINE_STRIP);
-	for(int i=0; i<circle_r1_xy.size(); i+=2){
-		glVertex3f(0, circle_r1_xy[i], circle_r1_xy[i+1]);
-	}
-	glEnd();
-	// y
-	glColor4f(0.5f, 1, 0.5f, transparency);
-	glBegin(GL_LINE_STRIP);
-	for(int i=0; i<circle_r1_xy.size(); i+=2){
-		glVertex3f(circle_r1_xy[i], 0, circle_r1_xy[i+1]);
-	}
-	glEnd();
-	// z
-	glColor4f(0.5f, 0.5f, 1, transparency);
-	glBegin(GL_LINE_STRIP);
-	for(int i=0; i<circle_r1_xy.size(); i+=2){
-		glVertex3f(circle_r1_xy[i], circle_r1_xy[i+1], 0);
-	}
-	glEnd();
-	glPopMatrix();
-
-	if( gl_li ) glEnable(GL_LIGHTING); else glDisable(GL_LIGHTING);
-	if( gl_dp ) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
-	if( gl_bd ) glEnable(GL_BLEND); else glDisable(GL_BLEND);
-	glLineWidth(gl_lw);
-	glColor3fv(gl_cl);
+	trans_state.save_mouse_pos(x, y);
 }
 
 void GlStaff::xyz_frame(float xlen, float ylen, float zlen, bool solid)
