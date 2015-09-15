@@ -62,12 +62,14 @@ public:
 		float r = std::min(win_w,win_h)*trackball_r;
 		if(x!=xpos){
 			float a = angle(x-xpos, r);
-			mat_modelview *= glm::rotate(a, ground_normal);
+			glm::vec3 center = glm::vec3( glm::affineInverse(mat_modelview) * glm::vec4(0, 0, trackball_center_z, 1) );
+			mat_modelview *= glm::translate(center) * glm::rotate(a, ground_normal) * glm::translate(-center);
 		}
 		if(y!=ypos){
 			float a = angle(y-ypos, r);
 			glm::vec3 v = glm::vec3(glm::affineInverse(mat_modelview)*glm::vec4(1,0,0, 0));
-			mat_modelview *= glm::rotate(-a, v);
+			glm::vec3 center = glm::vec3( glm::affineInverse(mat_modelview) * glm::vec4(0, 0, trackball_center_z, 1) );
+			mat_modelview *= glm::translate(center) * glm::rotate(-a, v) * glm::translate(-center);
 		}
 	}
 	void rotate_ground(float x, float y, const float ground_normal[3])
