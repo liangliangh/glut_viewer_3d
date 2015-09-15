@@ -11,14 +11,6 @@
 #include "gl_staff.h"
 
 
-static void initGL();
-static void cb_display();
-static void cb_reshape(int w, int h);
-static void cb_keyboard(unsigned char key, int x, int y);
-static void cb_specialkey(int key, int x, int y);
-static void cb_mouseclick(int button, int trans_state, int x, int y);
-static void cb_mousemotion(int x, int y);
-
 // class to implement OpenGL view transformation from mouse
 class TransformationState
 {
@@ -33,7 +25,7 @@ public:
 	float origin_upper_left = true; // true if origin is upper-left, false lower-left
 	float xpos=0, ypos=0;
 
-	// rotate_grab, rotate_trackball, translate use the last mouse pos saved by save_mouse_pos
+	// rotate_*, translate use the last mouse pos saved by save_mouse_pos
 	void save_mouse_pos(float x, float y)
 	{
 		xpos = x;
@@ -43,7 +35,7 @@ public:
 	{
 		if(origin_upper_left) y = win_h-y;
 		if(x==xpos && y==ypos) return;
-		float s = -trackball_center_z*tan(frustum_fovy/2) / (win_h/2.0f);
+		float s = -trackball_center_z*std::tan(frustum_fovy/2) / (win_h/2.0f);
 		float theta; glm::vec3 n;
 		grab( &theta, &n,
 			(xpos-win_w/2.0f)*s, (ypos-win_h/2.0f)*s, (x-win_w/2.0f)*s, (y-win_h/2.0f)*s,
@@ -58,18 +50,39 @@ public:
 		trackball( &theta, &n,
 			xpos-win_w/2.0f, ypos-win_h/2.0f, x-win_w/2.0f, y-win_h/2.0f,
 			std::min(win_w,win_h)*trackball_r );
-
 		glm::mat4 inv_modelview = glm::affineInverse(mat_modelview);
 		glm::vec3 normal = glm::vec3( inv_modelview * glm::vec4(n, 0) );
 		glm::vec3 center = glm::vec3( inv_modelview * glm::vec4(0, 0, trackball_center_z, 1) );
 		mat_modelview *= glm::translate(center) * glm::rotate(theta, normal) * glm::translate(-center);
+	}
+	void rotate_ground(float x, float y, const glm::vec3& ground_normal=glm::vec3(0,1,0))
+	{
+		if(origin_upper_left) y = win_h-y;
+		if(x==xpos && y==ypos) return;
+		float r = std::min(win_w,win_h)*trackball_r;
+		if(x!=xpos){
+			float a = angle(x-xpos, r);
+			mat_modelview *= glm::rotate(a, ground_normal);
+		}
+		if(y!=ypos){
+			float a = angle(y-ypos, r);
+			glm::vec3 v = glm::vec3(glm::affineInverse(mat_modelview)*glm::vec4(1,0,0, 0));
+			mat_modelview *= glm::rotate(-a, v);
+		}
+	}
+	void rotate_ground(float x, float y, const float ground_normal[3])
+	{
+		if(ground_normal)
+			rotate_ground(x, y, *(const glm::vec3*)ground_normal);
+		else
+			rotate_ground(x, y);
 	}
 	void translate(float x, float y)
 	{
 		if(origin_upper_left) y = win_h-y;
 		if(x==xpos && y==ypos) return;
 		float dx = x-xpos, dy = y-ypos;
-		float scale = tan(frustum_fovy/2)*(-trackball_center_z) / (win_h/2);
+		float scale = std::tan(frustum_fovy/2)*(-trackball_center_z) / (win_h/2);
 		mat_modelview = glm::translate( glm::vec3(scale*dx, scale*dy, 0) ) * mat_modelview;
 	}
 	// s=1, not change, >1 bigger, <1 smaller
@@ -86,7 +99,7 @@ public:
 		win_w = width;
 		win_h = height;
 		if(proj_orth){
-			float hh = -trackball_center_z * tan(frustum_fovy/2) * 2;
+			float hh = -trackball_center_z * std::tan(frustum_fovy/2) * 2;
 			float ww = hh * win_w / win_h;
 			mat_projection = glm::ortho(-ww/2, ww/2, -hh/2, hh/2, trackball_center_z*2, -trackball_center_z*4);
 		}else{
@@ -109,7 +122,7 @@ public:
 	}
 	void draw_trackball(float transparency, float linewidth) const
 	{
-		float r = -trackball_center_z * tan( frustum_fovy/2 ) * trackball_r * 2;
+		float r = -trackball_center_z * std::tan( frustum_fovy/2 ) * trackball_r * 2;
 		glm::vec3 center = glm::vec3(
 				glm::affineInverse(mat_modelview) * glm::vec4(0, 0, trackball_center_z, 1) );
 
@@ -131,6 +144,10 @@ public:
 
 private:
 
+	static float angle(float d, float r)
+	{
+		return d/r;
+	}
 	static void grab(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float z)
 	{
 		glm::vec3 a = glm::normalize( glm::vec3(ax,ay,z) );
@@ -146,13 +163,13 @@ private:
 	{
 		float az, bz, a2=ax*ax+ay*ay, b2=bx*bx+by*by, r2=r*r;
 		if(a2 <= r2/2)
-			az = sqrt( r2-a2 ); // https://www.opengl.org/wiki/Object_Mouse_Trackball
+			az = std::sqrt( r2-a2 ); // https://www.opengl.org/wiki/Object_Mouse_Trackball
 		else
-			az = r2 / 2 / sqrt( a2 );
+			az = r2 / 2 / std::sqrt( a2 );
 		if(b2 <= r2/2)
-			bz = sqrt( r2-b2 );
+			bz = std::sqrt( r2-b2 );
 		else
-			bz = r2 / 2 / sqrt( b2 );
+			bz = r2 / 2 / std::sqrt( b2 );
 		glm::vec3 a = glm::normalize( glm::vec3(ax,ay,az) );
 		glm::vec3 b = glm::normalize( glm::vec3(bx,by,bz) );
 		float d = glm::dot(a,b);
@@ -170,8 +187,8 @@ private:
 			const int n = 100;
 			for(int i=0; i<n; ++i){
 				float radians = float(i)/n * 2 * 3.14159265f;
-				circle_r1_xy.push_back( cos(radians) );
-				circle_r1_xy.push_back( sin(radians) );
+				circle_r1_xy.push_back( std::cos(radians) );
+				circle_r1_xy.push_back( std::sin(radians) );
 			}
 			circle_r1_xy.push_back( 1 );
 			circle_r1_xy.push_back( 0 );
@@ -228,12 +245,22 @@ int screen_w, screen_h;
 bool camera_coor_marker = false;
 bool draw_fps = true;
 int  mouse_key_pressed = -1;
+int  modifier_key_pressed = -1;
 
 // draw function
 void (*draw_func)() = NULL;
 
 // user key functions
 std::map<int,void(*)()> key_funcs;
+
+
+static void initGL();
+static void cb_display();
+static void cb_reshape(int w, int h);
+static void cb_keyboard(unsigned char key, int x, int y);
+static void cb_specialkey(int key, int x, int y);
+static void cb_mouseclick(int button, int trans_state, int x, int y);
+static void cb_mousemotion(int x, int y);
 
 
 void GlStaff::init(int win_width, int win_height, const char* win_tile)
@@ -386,6 +413,7 @@ static void cb_mouseclick(int button, int bstate, int x, int y)
 {
 	if( bstate == GLUT_UP ){
 		mouse_key_pressed = -1;
+		modifier_key_pressed = -1;
 		return;
 	}
 
@@ -394,6 +422,7 @@ static void cb_mouseclick(int button, int bstate, int x, int y)
 	case GLUT_RIGHT_BUTTON:
 	case GLUT_MIDDLE_BUTTON:
 		mouse_key_pressed = button;
+		modifier_key_pressed = glutGetModifiers();
 		break;
 	case GLUT_WHEEL_UP:
 		trans_state.scale(1.05f);
@@ -410,7 +439,11 @@ static void cb_mousemotion(int x, int y)
 {
 	if(mouse_key_pressed==GLUT_LEFT_BUTTON)
 	{ // mouse left, trackball
-		trans_state.rotate_trackball(x, y);
+		if(modifier_key_pressed & GLUT_ACTIVE_CTRL){
+			trans_state.rotate_ground(x,y,glm::vec3(0,1,0));
+		}else{
+			trans_state.rotate_trackball(x, y);
+		}
 	}
 	else if(mouse_key_pressed==GLUT_RIGHT_BUTTON)
 	{ // mouse right, change camera direction
