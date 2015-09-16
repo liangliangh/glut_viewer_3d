@@ -13,7 +13,7 @@ void printProgramInfoLog(GLuint obj, bool always=false);
 void printGlVersion();
 
 
-static const char* glerrorstring(GLenum code)
+inline const char* glerrorstring(GLenum code)
 {
 	switch(code){
 		case GL_NO_ERROR:
@@ -35,7 +35,7 @@ static const char* glerrorstring(GLenum code)
 	}
 }
 
-void printGlError(const char* ss, bool always)
+inline void printGlError(const char* ss, bool always)
 {
 	GLenum code = glGetError();
 	if( always || code != GL_NO_ERROR ){
@@ -44,7 +44,7 @@ void printGlError(const char* ss, bool always)
 }
 
 // http://www.lighthouse3d.com/tutorials/glsl-tutorial/
-void printShaderInfoLog(GLuint obj, bool always)
+inline void printShaderInfoLog(GLuint obj, bool always)
 {
 	GLint ret; glGetShaderiv(obj, GL_COMPILE_STATUS, &ret);
 	if(!always && ret==GL_TRUE) return;
@@ -63,7 +63,7 @@ void printShaderInfoLog(GLuint obj, bool always)
 	}
 }
 
-void printProgramInfoLog(GLuint obj, bool always)
+inline void printProgramInfoLog(GLuint obj, bool always)
 {
 	GLint ret; glGetProgramiv(obj, GL_LINK_STATUS, &ret);
 	if(!always && ret==GL_TRUE) return;
@@ -82,7 +82,7 @@ void printProgramInfoLog(GLuint obj, bool always)
 	}
 }
 
-void printGlVersion()
+inline void printGlVersion()
 {
 	printf("OpenGL Version: %s\n", glGetString(GL_VERSION));
 	printf("OpenGL Vendor : %s\n", glGetString(GL_VENDOR));
@@ -96,5 +96,6 @@ void printGlVersion()
 	glGetIntegerv(GL_MAX_ARRAY_TEXTURE_LAYERS, &n);
 	printf("max length of texture array: %d\n", n);
 }
+
 
 #endif // #ifndef _GL_INFO_H_

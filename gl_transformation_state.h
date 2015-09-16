@@ -56,13 +56,13 @@ private:
 
 
 // rotate_*, translate use the last mouse pos saved by save_mouse_pos
-void TransformationState::save_mouse_pos(float x, float y)
+inline void TransformationState::save_mouse_pos(float x, float y)
 {
 	xpos = x;
 	ypos = origin_upper_left ? win_h-y : y;
 }
 
-void TransformationState::rotate_grab(float x, float y)
+inline void TransformationState::rotate_grab(float x, float y)
 {
 	if(origin_upper_left) y = win_h-y;
 	if(x==xpos && y==ypos) return;
@@ -74,7 +74,7 @@ void TransformationState::rotate_grab(float x, float y)
 	mat_modelview = glm::rotate(theta, n) * mat_modelview;
 }
 
-void TransformationState::rotate_trackball(float x, float y) // O at left-bottom of window, to left is X+, up is Y+
+inline void TransformationState::rotate_trackball(float x, float y) // O at left-bottom of window, to left is X+, up is Y+
 {
 	if(origin_upper_left) y = win_h-y;
 	if(x==xpos && y==ypos) return;
@@ -88,7 +88,7 @@ void TransformationState::rotate_trackball(float x, float y) // O at left-bottom
 	mat_modelview *= glm::translate(center) * glm::rotate(theta, normal) * glm::translate(-center);
 }
 
-void TransformationState::rotate_ground(float x, float y, const glm::vec3& ground_normal)
+inline void TransformationState::rotate_ground(float x, float y, const glm::vec3& ground_normal)
 {
 	if(origin_upper_left) y = win_h-y;
 	if(x==xpos && y==ypos) return;
@@ -106,7 +106,7 @@ void TransformationState::rotate_ground(float x, float y, const glm::vec3& groun
 	}
 }
 
-void TransformationState::rotate_ground(float x, float y, const float ground_normal[3])
+inline void TransformationState::rotate_ground(float x, float y, const float ground_normal[3])
 {
 	if(ground_normal)
 		rotate_ground(x, y, *(const glm::vec3*)ground_normal);
@@ -114,7 +114,7 @@ void TransformationState::rotate_ground(float x, float y, const float ground_nor
 		rotate_ground(x, y);
 }
 
-void TransformationState::translate(float x, float y)
+inline void TransformationState::translate(float x, float y)
 {
 	if(origin_upper_left) y = win_h-y;
 	if(x==xpos && y==ypos) return;
@@ -124,7 +124,7 @@ void TransformationState::translate(float x, float y)
 }
 
 // s=1, not change, >1 bigger, <1 smaller
-void TransformationState::scale(float s)
+inline void TransformationState::scale(float s)
 {
 	if(s==1 || s<=0) return;
 	float z = trackball_center_z;
@@ -133,7 +133,7 @@ void TransformationState::scale(float s)
 	mat_modelview = glm::translate( glm::vec3(0, 0, trackball_center_z-z) ) * mat_modelview;
 }
 
-void TransformationState::win_size(int width, int height)
+inline void TransformationState::win_size(int width, int height)
 {
 	win_w = width;
 	win_h = height;
@@ -147,14 +147,14 @@ void TransformationState::win_size(int width, int height)
 	}
 }
 
-bool TransformationState::toggle_orth()
+inline bool TransformationState::toggle_orth()
 {
 	proj_orth = !proj_orth;
 	win_size(win_w, win_h);
 	return proj_orth;
 }
 
-void TransformationState::load_gl_matrix() const
+inline void TransformationState::load_gl_matrix() const
 {
 	glMatrixMode(GL_PROJECTION);
 	glLoadMatrixf(&mat_projection[0][0]);
@@ -162,7 +162,7 @@ void TransformationState::load_gl_matrix() const
 	glLoadMatrixf(&mat_modelview[0][0]);
 }
 
-void TransformationState::draw_trackball(float transparency, float linewidth) const
+inline void TransformationState::draw_trackball(float transparency, float linewidth) const
 {
 	float r = -trackball_center_z * std::tan( frustum_fovy/2 ) * trackball_r * 2;
 	glm::vec3 center = glm::vec3(
@@ -183,12 +183,12 @@ void TransformationState::draw_trackball(float transparency, float linewidth) co
 	glMatrixMode(GL_MODELVIEW);glPopMatrix();
 }
 
-float TransformationState::angle(float d, float r)
+inline float TransformationState::angle(float d, float r)
 {
 	return d/r;
 }
 
-void TransformationState::grab(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float z)
+inline void TransformationState::grab(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float z)
 {
 	glm::vec3 a = glm::normalize( glm::vec3(ax,ay,z) );
 	glm::vec3 b = glm::normalize( glm::vec3(bx,by,z) );
@@ -200,7 +200,7 @@ void TransformationState::grab(float* theta, glm::vec3* normal, float ax, float 
 	*normal = glm::length2(c)==0 ? glm::vec3(0,1,0) : c;
 }
 
-void TransformationState::trackball(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float r)
+inline void TransformationState::trackball(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float r)
 {
 	float az, bz, a2=ax*ax+ay*ay, b2=bx*bx+by*by, r2=r*r;
 	if(a2 <= r2/2)
@@ -222,7 +222,7 @@ void TransformationState::trackball(float* theta, glm::vec3* normal, float ax, f
 }
 
 // color_xox[4] is linewidth
-void TransformationState::draw_3axis_unite_circle(float color_yoz[5], float color_zox[5], float color_xoy[5])
+inline void TransformationState::draw_3axis_unite_circle(float color_yoz[5], float color_zox[5], float color_xoy[5])
 {
 	static std::vector<float> circle_r1_xy;
 	if( circle_r1_xy.size()==0 ){
