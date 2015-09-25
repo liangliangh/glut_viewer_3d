@@ -6,11 +6,16 @@
 #include <GL/gl.h>
 #include <GL/glext.h>
 
+#include <stdio.h>
+#include <stdlib.h>
+
 
 void printGlError(const char* ss, bool always=false);
 void printShaderInfoLog(GLuint obj, bool always=false);
 void printProgramInfoLog(GLuint obj, bool always=false);
 void printGlVersion();
+char* textFileRead(const char* fn);
+GLuint setupGLPipeline(const char* vertex_shader, const char* fragment_shader);
 
 
 inline const char* glerrorstring(GLenum code)
@@ -97,5 +102,51 @@ inline void printGlVersion()
 	printf("max length of texture array: %d\n", n);
 }
 
+inline char* textFileRead(const char* fn)
+{
+	FILE *fp = fopen(fn, "rt");
+	if(!fp){
+		printf("textFileRead(\"%s\") failed.\n", fn);
+		return NULL;
+	}
+
+	fseek(fp, 0, SEEK_END);
+	int count = ftell(fp);
+	rewind(fp);
+
+	char *content = NULL;
+	if (count > 0) {
+		content = (char *)malloc(sizeof(char) * (count+1));
+		count = fread(content, sizeof(char), count, fp);
+		content[count] = '\0';
+	}
+	fclose(fp);
+
+	return content;
+}
+
+inline GLuint setupGLPipeline(const char* vertex_shader, const char* fragment_shader)
+{
+	GLuint glsl_verts = glCreateShader(GL_VERTEX_SHADER);
+	GLuint glsl_frags = glCreateShader(GL_FRAGMENT_SHADER);
+	char* vss = textFileRead(vertex_shader);
+	char* fss = textFileRead(fragment_shader);
+	glShaderSource(glsl_verts, 1, &vss, NULL);
+	glShaderSource(glsl_frags, 1, &fss, NULL);
+	free(vss); free(fss);
+
+	glCompileShader(glsl_verts); printShaderInfoLog(glsl_verts);
+	glCompileShader(glsl_frags); printShaderInfoLog(glsl_frags);
+
+	GLuint glsl_prog = glCreateProgram();
+	glAttachShader(glsl_prog, glsl_verts);
+	glAttachShader(glsl_prog, glsl_frags);
+
+	glLinkProgram(glsl_prog); printProgramInfoLog(glsl_prog);
+
+	printGlError("SetupGLPipeline()");
+
+	return glsl_prog;
+}
 
 #endif // #ifndef _GL_INFO_H_

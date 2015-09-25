@@ -4,12 +4,17 @@
 #ifndef _GL_STAFF_H_
 #define _GL_STAFF_H_
 
-#include "GL/glut.h"
+#define GL_GLEXT_PROTOTYPES // used in <GL/glext.h>
+#include <GL/gl.h>
+#include <GL/glext.h>
+#include <GL/glut.h>
+
 #define GLM_FORCE_RADIANS // need not for glm 9.6
 #include "glm/glm.hpp"
 #include "glm/ext.hpp"
 
 #include "omp.h"
+#include <vector>
 
 
 namespace GlStaff {
@@ -24,7 +29,8 @@ bool toggle_proj_orth();
 
 void hsl_to_rgb( float h, float s, float l, float* rgb );
 float rgb_to_gray( float r, float g, float b );
-
+GLuint load_tex(const char* file, bool only_red2alpha=false);
+int load_tex_from_video(const char* file, std::vector<GLuint>& textures, bool only_red2alpha=false);
 
 
 } // namespace GlStaff

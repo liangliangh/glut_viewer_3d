@@ -13,6 +13,9 @@
 #include "glm/glm.hpp"
 #include "glm/ext.hpp"
 
+#include "opencv2/core/core.hpp"
+#include "opencv2/highgui/highgui.hpp"
+
 #include <stdio.h>
 #include <string.h>
 #include <stddef.h>
@@ -21,21 +24,23 @@
 #include <vector>
 #include <map>
 
-TransformationState trans_state;
 
-int screen_w, screen_h;
-bool camera_coor_marker = false;
-bool draw_fps = true;
-int  mouse_key_pressed = -1;
-int  modifier_key_pressed = -1;
+// ------------------------ variables
+static TransformationState trans_state;
+
+static int screen_w, screen_h;
+static bool camera_coor_marker = false;
+static bool draw_fps = true;
+static int  mouse_key_pressed = -1;
+static int  modifier_key_pressed = -1;
 
 // draw function
-void (*draw_func)() = NULL;
+static void (*draw_func)() = NULL;
 
 // user key functions
-std::map<int,void(*)()> key_funcs;
+static std::map<int,void(*)()> key_funcs;
 
-
+// ------------------------ declarations
 static void initGL();
 static void cb_display();
 static void cb_reshape(int w, int h);
@@ -45,6 +50,7 @@ static void cb_mouseclick(int button, int trans_state, int x, int y);
 static void cb_mousemotion(int x, int y);
 
 
+// ------------------------ definitions
 void GlStaff::init(int win_width, int win_height, const char* win_tile)
 {
 	int argc = 0;
@@ -358,5 +364,137 @@ void GlStaff::hsl_to_rgb( float h, float s, float l, float* rgb )
 float GlStaff::rgb_to_gray( float r, float g, float b )
 {
 	return r*0.299f + g*0.587f + b*0.114f;
+}
+
+// only use the Red channel to format a gray image
+GLuint GlStaff::load_tex(const char* file, bool only_red2alpha)
+{
+	static std::map<std::string, GLuint> s_files;
+	// for the file occurred, don't create new textures
+	if( s_files.find(std::string(file)) != s_files.end() ){
+		return s_files.find(std::string(file))->second;
+	}
+
+	GLuint tex;
+	glGenTextures(1, &tex);
+	glBindTexture(GL_TEXTURE_2D, tex);
+
+	cv::Mat img_rgb;
+	cv::Mat img_rgba;
+	img_rgb = cv::imread(file, cv::IMREAD_UNCHANGED);
+	if( img_rgb.empty() ){
+		printf("load_tex(): load image \"%s\" failed!\n", file);
+		return 0;
+	}
+	cv::Mat img2;
+	cv::flip(img_rgb, img2, 0);
+	img_rgb = img2;
+	img_rgba.create(img_rgb.rows, img_rgb.cols, CV_32FC4);
+	int channels = img_rgb.channels();
+
+	if(channels>=4){
+		if(only_red2alpha){
+			for(int i=0; i<img_rgb.rows; ++i){
+				for(int j=0; j<img_rgb.cols; ++j){
+					img_rgba.at<cv::Vec4f>(i,j)[0] = img_rgba.at<cv::Vec4f>(i,j)[1] = img_rgba.at<cv::Vec4f>(i,j)[2] = 1;
+					img_rgba.at<cv::Vec4f>(i,j)[3] = img_rgb.at<cv::Vec4b>(i,j)[0] / 255.0f;
+				}
+			}
+		}else{
+			for(int i=0; i<img_rgb.rows; ++i){
+				for(int j=0; j<img_rgb.cols; ++j){
+					img_rgba.at<cv::Vec4f>(i,j)[0] = img_rgb.at<cv::Vec4b>(i,j)[0] / 255.0f;
+					img_rgba.at<cv::Vec4f>(i,j)[1] = img_rgb.at<cv::Vec4b>(i,j)[1] / 255.0f;
+					img_rgba.at<cv::Vec4f>(i,j)[2] = img_rgb.at<cv::Vec4b>(i,j)[2] / 255.0f;
+					img_rgba.at<cv::Vec4f>(i,j)[3] = img_rgb.at<cv::Vec4b>(i,j)[3] / 255.0f;
+				}
+			}
+		}
+	}else{
+		if(only_red2alpha){
+			for(int i=0; i<img_rgb.rows; ++i){
+				for(int j=0; j<img_rgb.cols; ++j){
+					img_rgba.at<cv::Vec4f>(i,j)[0] = img_rgba.at<cv::Vec4f>(i,j)[1] = img_rgba.at<cv::Vec4f>(i,j)[2] = 1;
+					img_rgba.at<cv::Vec4f>(i,j)[3] = img_rgb.at<cv::Vec3b>(i,j)[0] / 255.0f;
+				}
+			}
+		}else{
+			for(int i=0; i<img_rgb.rows; ++i){
+				for(int j=0; j<img_rgb.cols; ++j){
+					img_rgba.at<cv::Vec4f>(i,j)[0] = img_rgb.at<cv::Vec3b>(i,j)[0] / 255.0f;
+					img_rgba.at<cv::Vec4f>(i,j)[1] = img_rgb.at<cv::Vec3b>(i,j)[1] / 255.0f;
+					img_rgba.at<cv::Vec4f>(i,j)[2] = img_rgb.at<cv::Vec3b>(i,j)[2] / 255.0f;
+					img_rgba.at<cv::Vec4f>(i,j)[3] = 1;
+				}
+			}
+		}
+	}
+
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img_rgba.cols, img_rgba.rows, 0, GL_BGRA, GL_FLOAT, img_rgba.data);
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, GL_REPEAT);
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+
+	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+
+	glBindTexture(GL_TEXTURE_2D, 0); // release bind
+
+	s_files[std::string(file)] = tex;
+	return tex;
+}
+
+int GlStaff::load_tex_from_video(const char* file, std::vector<GLuint>& textures, bool only_red2alpha)
+{
+	static std::map<std::string, std::vector<GLuint>> s_files;
+	// for the file occurred, don't create new textures
+	if( s_files.find(std::string(file)) != s_files.end() ){
+		textures = s_files.find(std::string(file))->second;
+		return textures.size();
+	}
+
+	cv::VideoCapture video;
+	video.open(file);
+	if(!video.isOpened()){
+		printf("load_tex_from_video(\"%s\") failed!\n", file);
+		return 0;
+	}
+	textures.clear();
+	cv::Mat frame;
+	cv::Mat img_rgba(frame.rows, frame.cols, CV_8UC4);
+	while( video.read(frame) ){
+		cv::Mat img2;
+		cv::flip(frame, img2, 0);
+		frame = img2;
+
+		GLuint tex;
+		glGenTextures(1, &tex);
+		glBindTexture(GL_TEXTURE_2D, tex);
+		if(only_red2alpha){
+			for(int i=0; i<frame.rows; ++i){
+				for(int j=0; j<frame.cols; ++j){
+					img_rgba.at<cv::Vec4b>(i,j)[0] = img_rgba.at<cv::Vec4b>(i,j)[1] = img_rgba.at<cv::Vec4b>(i,j)[2] = 255u;
+					img_rgba.at<cv::Vec4b>(i,j)[3] = frame.at<cv::Vec3b>(i,j)[0];
+				}
+			}
+		}else{
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, frame.cols, frame.rows, 0, GL_BGR, GL_UNSIGNED_BYTE, frame.data);
+		}
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+		glBindTexture(GL_TEXTURE_2D, 0); // release bind
+
+		textures.push_back(tex);
+	}
+
+	s_files[std::string(file)] = textures;
+	return textures.size();
 }
 
