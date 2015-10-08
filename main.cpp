@@ -53,6 +53,12 @@ void draw()
 	//ShaderEnd();
 	OitEnd();
 
+	{
+		static double t = -1;
+		double t2 = omp_get_wtime();
+		printf("%.2f\n", (t2-t)*1000-30);
+		t = t2;
+	}
 
 	glutPostRedisplay();
 	usleep(1000 * 30);
@@ -217,9 +223,9 @@ void OitBegin(GLint* transformation, GLint* tri_color)
 	glActiveTexture(GL_TEXTURE0 + 0);
 	//GLfloat* pixdata = new GLfloat[width_*height_*4];
 	cv::Mat pix(height_, width_, CV_32FC4);
-	glReadPixels(vret[0], vret[1], width_, height_, GL_RGBA, GL_FLOAT, pix.data);//cv::imshow("a", pix);cv::waitKey(1);
+	glReadPixels(vret[0], vret[1], width_, height_, GL_RGBA, GL_UNSIGNED_BYTE, pix.data);//cv::imshow("a", pix);cv::waitKey(1);
 	glBindTexture(GL_TEXTURE_2D, gl_tex_frame_);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width_, height_, 0, GL_RGBA, GL_FLOAT, pix.data);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width_, height_, 0, GL_RGBA, GL_UNSIGNED_BYTE, pix.data);
 	//delete[] pixdata;
 	glBindTexture(GL_TEXTURE_2D, 0);
 
