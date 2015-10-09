@@ -19,7 +19,7 @@
 class TransformationState
 {
 public:
-	int   win_w=1, win_h=1;
+	int   win_w=1, win_h=1, o_x=0, o_y=0, origin_upper_left_ylen=0;
 	glm::mat4 mat_modelview = glm::lookAt(glm::vec3(0,0,100), glm::vec3(0), glm::vec3(0,1,0));
 	glm::mat4 mat_projection;
 	float frustum_fovy = glm::radians(30.0f);
@@ -38,7 +38,7 @@ public:
 	void translate(float x, float y);
 	// s=1, not change, >1 bigger, <1 smaller
 	void scale(float s);
-	void win_size(int width, int height);
+	void win_size(int width, int height, int ox=0, int oy=0, int ylen=0);
 	bool toggle_orth();
 	void load_gl_matrix() const;
 	void draw_trackball(float transparency, float linewidth) const;
@@ -46,6 +46,7 @@ public:
 
 private:
 
+	void normal_xy(float& x, float& y);
 	static float angle(float d, float r);
 	static void grab(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float z);
 	static void trackball(float* theta, glm::vec3* normal, float ax, float ay, float bx, float by, float r);
@@ -55,16 +56,23 @@ private:
 }; // class TransformationState
 
 
+inline void TransformationState::normal_xy(float& x, float& y)
+{
+	x = x - o_x;
+	y = (origin_upper_left ? origin_upper_left_ylen-y : y) - o_y;
+}
+
 // rotate_*, translate use the last mouse pos saved by save_mouse_pos
 inline void TransformationState::save_mouse_pos(float x, float y)
 {
+	normal_xy(x, y);
 	xpos = x;
-	ypos = origin_upper_left ? win_h-y : y;
+	ypos = y;
 }
 
 inline void TransformationState::rotate_grab(float x, float y)
 {
-	if(origin_upper_left) y = win_h-y;
+	normal_xy(x, y);
 	if(x==xpos && y==ypos) return;
 	float s = -trackball_center_z*std::tan(frustum_fovy/2) / (win_h/2.0f);
 	float theta; glm::vec3 n;
@@ -76,7 +84,7 @@ inline void TransformationState::rotate_grab(float x, float y)
 
 inline void TransformationState::rotate_trackball(float x, float y) // O at left-bottom of window, to left is X+, up is Y+
 {
-	if(origin_upper_left) y = win_h-y;
+	normal_xy(x, y);
 	if(x==xpos && y==ypos) return;
 	float theta; glm::vec3 n;
 	trackball( &theta, &n,
@@ -90,7 +98,7 @@ inline void TransformationState::rotate_trackball(float x, float y) // O at left
 
 inline void TransformationState::rotate_ground(float x, float y, const glm::vec3& ground_normal)
 {
-	if(origin_upper_left) y = win_h-y;
+	normal_xy(x, y);
 	if(x==xpos && y==ypos) return;
 	float r = std::min(win_w,win_h)*trackball_r;
 	if(x!=xpos){
@@ -116,7 +124,7 @@ inline void TransformationState::rotate_ground(float x, float y, const float gro
 
 inline void TransformationState::translate(float x, float y)
 {
-	if(origin_upper_left) y = win_h-y;
+	normal_xy(x, y);
 	if(x==xpos && y==ypos) return;
 	float dx = x-xpos, dy = y-ypos;
 	float scale = std::tan(frustum_fovy/2)*(-trackball_center_z) / (win_h/2);
@@ -129,28 +137,32 @@ inline void TransformationState::scale(float s)
 	if(s==1 || s<=0) return;
 	float z = trackball_center_z;
 	trackball_center_z *= s;
-	win_size(win_w, win_h); // recompute projection matrix
+	win_size(win_w, win_h, o_x, o_y, origin_upper_left_ylen); // recompute projection matrix
 	mat_modelview = glm::translate( glm::vec3(0, 0, trackball_center_z-z) ) * mat_modelview;
 }
 
-inline void TransformationState::win_size(int width, int height)
+inline void TransformationState::win_size(int width, int height, int ox, int oy, int ylen)
 {
 	win_w = width;
 	win_h = height;
+	o_x = ox;
+	o_y = oy;
+	if(ylen) origin_upper_left_ylen = ylen;
+	else     origin_upper_left_ylen = height; //printf("%d  %d  %d  %d  %d\n", o_x, o_y, win_w, win_h, origin_upper_left_ylen);
 	if(proj_orth){
 		float hh = -trackball_center_z * std::tan(frustum_fovy/2) * 2;
 		float ww = hh * win_w / win_h;
 		mat_projection = glm::ortho(-ww/2, ww/2, -hh/2, hh/2, trackball_center_z*2, -trackball_center_z*4);
 	}else{
 		mat_projection = glm::perspective(
-			frustum_fovy, float(win_w)/win_h, -trackball_center_z*0.1f, -trackball_center_z*5);
+			frustum_fovy, float(win_w)/win_h, -trackball_center_z*0.1f, -trackball_center_z*10000);
 	}
 }
 
 inline bool TransformationState::toggle_orth()
 {
 	proj_orth = !proj_orth;
-	win_size(win_w, win_h);
+	win_size(win_w, win_h, o_x, o_y, origin_upper_left_ylen);
 	return proj_orth;
 }
 
